@@ -428,7 +428,7 @@ var _ = framework.KubeDescribe("Kubectl client", func() {
 				WithStdinData("abcd1234\n").
 				ExecOrDie()
 			Expect(runOutput).ToNot(ContainSubstring("stdin closed"))
-			f := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods(pods)) }
+			f := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods{pods, nil}) }
 			runTestPod, _, err := util.GetFirstPod(c, ns, labels.SelectorFromSet(map[string]string{"run": "run-test-3"}), 1*time.Minute, f)
 			if err != nil {
 				os.Exit(1)

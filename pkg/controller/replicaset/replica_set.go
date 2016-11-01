@@ -45,6 +45,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/util/workqueue"
 	"k8s.io/kubernetes/pkg/watch"
+	scalerMetrics "k8s.io/kubernetes/pkg/controller/podautoscaler/metrics"
 )
 
 const (
@@ -111,6 +112,9 @@ type ReplicaSetController struct {
 	// garbageCollectorEnabled denotes if the garbage collector is enabled. RC
 	// manager behaves differently if GC is enabled.
 	garbageCollectorEnabled bool
+
+	// get cpu usage per pod
+	metricsClient scalerMetrics.MetricsClient
 }
 
 // NewReplicaSetController creates a new ReplicaSetController.
@@ -130,6 +134,16 @@ func newReplicaSetController(eventRecorder record.EventRecorder, podInformer cac
 		metrics.RegisterMetricAndTrackRateLimiterUsage("replicaset_controller", kubeClient.Core().GetRESTClient().GetRateLimiter())
 	}
 
+	var metricsClient scalerMetrics.MetricsClient = nil
+	if kubeClient != nil {
+		metricsClient = scalerMetrics.NewHeapsterMetricsClient(
+				kubeClient,
+				scalerMetrics.DefaultHeapsterNamespace,
+				scalerMetrics.DefaultHeapsterScheme,
+				scalerMetrics.DefaultHeapsterService,
+				scalerMetrics.DefaultHeapsterPort)
+	}
+
 	rsc := &ReplicaSetController{
 		kubeClient: kubeClient,
 		podControl: controller.RealPodControl{
@@ -140,6 +154,7 @@ func newReplicaSetController(eventRecorder record.EventRecorder, podInformer cac
 		expectations:  controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
 		queue:         workqueue.NewNamed("replicaset"),
 		garbageCollectorEnabled: garbageCollectorEnabled,
+		metricsClient: metricsClient,
 	}
 
 	rsc.rsStore.Store, rsc.rsController = cache.NewInformer(
@@ -456,6 +471,24 @@ func (rsc *ReplicaSetController) worker() {
 	}
 }
 
+func (rsc *ReplicaSetController) getCpuUtilizationForPods(pods []*api.Pod) []int64 {
+	cpus := make([]int64, len(pods), len(pods))
+	for i, pod := range pods {
+		namespace := "default"
+		label, _ := labels.Parse("name=" + pod.Name)
+		podNames := map[string]struct{}{
+			pod.Name: struct{}{},
+		}
+		cpu, _, error := rsc.metricsClient.GetCpuUtilizationForPods(namespace, label, podNames)
+		if error != nil {
+			cpu = 1 << 31
+		}
+		cpus[i] = cpu
+	}
+	glog.Warning("RS getCpuUtilizationForPods %v", cpus)
+	return cpus
+}
+
 // manageReplicas checks and updates replicas for the given ReplicaSet.
 // Does NOT modify <filteredPods>.
 func (rsc *ReplicaSetController) manageReplicas(filteredPods []*api.Pod, rs *extensions.ReplicaSet) {
@@ -516,7 +549,8 @@ func (rsc *ReplicaSetController) manageReplicas(filteredPods []*api.Pod, rs *ext
 			// Sort the pods in the order such that not-ready < ready, unscheduled
 			// < scheduled, and pending < running. This ensures that we delete pods
 			// in the earlier stages whenever possible.
-			sort.Sort(controller.ActivePods(filteredPods))
+			cpus := rsc.getCpuUtilizationForPods(filteredPods)
+			sort.Sort(controller.ActivePods{filteredPods, cpus})
 		}
 		// Snapshot the UIDs (ns/name) of the pods we're expecting to see
 		// deleted, so we know to record their expectations exactly once either
