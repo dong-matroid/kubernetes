@@ -623,7 +623,9 @@ type ActivePods struct {
 func (s ActivePods) Len() int      { return len(s.Pods) }
 func (s ActivePods) Swap(i, j int) {
 	s.Pods[i], s.Pods[j] = s.Pods[j], s.Pods[i]
-	s.Preference[i], s.Preference[j] = s.Preference[j], s.Preference[i]
+	if s.Preference != nil {
+		s.Preference[i], s.Preference[j] = s.Preference[j], s.Preference[i]
+	}
 }
 
 func (s ActivePods) Less(i, j int) bool {

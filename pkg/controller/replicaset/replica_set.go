@@ -481,6 +481,7 @@ func (rsc *ReplicaSetController) getCpuUtilizationForPods(pods []*api.Pod) []int
 		}
 		cpu, _, error := rsc.metricsClient.GetCpuUtilizationForPods(namespace, label, podNames)
 		if error != nil {
+			glog.Warning("Error GetCpuUtilizationForPods %s %s", pod.Name, error)
 			cpu = 1 << 31
 		}
 		cpus[i] = cpu
