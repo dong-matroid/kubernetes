@@ -41,7 +41,7 @@ ALLOCATE_NODE_CIDRS=true
 NODE_INSTANCE_PREFIX="${INSTANCE_PREFIX}-minion"
 
 # The Auto Scaling Group (ASG) name must be unique, so we include the zone
-ASG_NAME="${NODE_INSTANCE_PREFIX}-group-${ZONE}"
+ASG_NAME="${NODE_INSTANCE_PREFIX}-${NODE_SIZE}-group-${ZONE}"
 
 # We could allow the master disk volume id to be specified in future
 MASTER_DISK_ID=

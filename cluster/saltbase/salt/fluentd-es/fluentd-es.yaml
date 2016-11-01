@@ -21,6 +21,9 @@ spec:
     - name: varlibdockercontainers
       mountPath: /var/lib/docker/containers
       readOnly: true
+    - name: containers
+      mountPath: /mnt/ephemeral/docker/containers
+      readOnly: true
   terminationGracePeriodSeconds: 30
   volumes:
   - name: varlog
@@ -29,4 +32,6 @@ spec:
   - name: varlibdockercontainers
     hostPath:
       path: /var/lib/docker/containers
-
+  - name: containers
+    hostPath:
+      path: /mnt/ephemeral/docker/containers
