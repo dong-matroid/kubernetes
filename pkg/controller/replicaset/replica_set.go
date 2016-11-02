@@ -471,25 +471,6 @@ func (rsc *ReplicaSetController) worker() {
 	}
 }
 
-func (rsc *ReplicaSetController) getCpuUtilizationForPods(pods []*api.Pod) []int64 {
-	cpus := make([]int64, len(pods), len(pods))
-	for i, pod := range pods {
-		namespace := "default"
-		label, _ := labels.Parse("name=" + pod.Name)
-		podNames := map[string]struct{}{
-			pod.Name: struct{}{},
-		}
-		cpu, _, error := rsc.metricsClient.GetCpuUtilizationForPods(namespace, label, podNames)
-		if error != nil {
-			glog.Warning("Error GetCpuUtilizationForPods %s %s", pod.Name, error)
-			cpu = 1 << 31
-		}
-		cpus[i] = cpu
-	}
-	glog.Warning("RS getCpuUtilizationForPods %v", cpus)
-	return cpus
-}
-
 // manageReplicas checks and updates replicas for the given ReplicaSet.
 // Does NOT modify <filteredPods>.
 func (rsc *ReplicaSetController) manageReplicas(filteredPods []*api.Pod, rs *extensions.ReplicaSet) {
@@ -550,7 +531,11 @@ func (rsc *ReplicaSetController) manageReplicas(filteredPods []*api.Pod, rs *ext
 			// Sort the pods in the order such that not-ready < ready, unscheduled
 			// < scheduled, and pending < running. This ensures that we delete pods
 			// in the earlier stages whenever possible.
-			cpus := rsc.getCpuUtilizationForPods(filteredPods)
+			cpus, _, error := rsc.metricsClient.GetCpuUtilizationPerPod(filteredPods)
+			if error != nil {
+				glog.Warning("Error GetCpuUtilizationPerPod ", error)
+			}
+			glog.Warning("Info: GetCpuUtilizationPerPod result ", cpus)
 			sort.Sort(controller.ActivePods{filteredPods, cpus})
 		}
 		// Snapshot the UIDs (ns/name) of the pods we're expecting to see

@@ -53,7 +53,7 @@ type MetricsClient interface {
 	// pods picked using the namespace and selector passed as arguments.
 	GetCustomMetric(customMetricName string, namespace string, selector labels.Selector) (*float64, time.Time, error)
 
-	GetCpuUtilizationForPods(namespace string, selector labels.Selector, podNames map[string]struct{}) (int64, time.Time, error)
+	GetCpuUtilizationPerPod(pods []*api.Pod) ([]int64, time.Time, error)
 
 }
 
@@ -149,14 +149,14 @@ func (h *HeapsterMetricsClient) GetCpuConsumptionAndRequestInMillis(namespace st
 	glog.V(4).Infof("%s %s - sum of CPU requested: %d", namespace, selector, requestSum)
 	requestAvg := requestSum / int64(len(podNames))
 	// Consumption is already averaged and in millis.
-	consumption, timestamp, err := h.GetCpuUtilizationForPods(namespace, selector, podNames)
+	consumption, timestamp, err := h.getCpuUtilizationForPods(namespace, selector, podNames)
 	if err != nil {
 		return 0, 0, 0, time.Time{}, err
 	}
 	return consumption, requestAvg, len(podNames), timestamp, nil
 }
 
-func (h *HeapsterMetricsClient) GetCpuUtilizationForPods(namespace string, selector labels.Selector, podNames map[string]struct{}) (int64, time.Time, error) {
+func (h *HeapsterMetricsClient) getCpuUtilizationForPods(namespace string, selector labels.Selector, podNames map[string]struct{}) (int64, time.Time, error) {
 	metricPath := fmt.Sprintf("/apis/metrics/v1alpha1/namespaces/%s/pods", namespace)
 	params := map[string]string{"labelSelector": selector.String()}
 
@@ -209,6 +209,71 @@ func (h *HeapsterMetricsClient) GetCpuUtilizationForPods(namespace string, selec
 	}
 
 	return sum / int64(len(metrics.Items)), metrics.Items[0].Timestamp.Time, nil
+}
+
+func (h *HeapsterMetricsClient) GetCpuUtilizationPerPod(pods []*api.Pod) ([]int64, time.Time, error) {
+
+	cpus := make([]int64, len(pods), len(pods))
+	podNames := make(map[string]int)
+	for i, pod := range pods {
+		podNames[pod.Name] = i
+		cpus[i] = 1 << 30
+	}
+	glog.Warning("Info: GetCpuUtilizationPerPod for ", podNames)
+
+	namespace := pods[0].Namespace
+	metricPath := fmt.Sprintf("/apis/metrics/v1alpha1/namespaces/%s/pods", namespace)
+	params := make(map[string]string)
+
+	resultRaw, err := h.client.Core().Services(h.heapsterNamespace).
+		ProxyGet(h.heapsterScheme, h.heapsterService, h.heapsterPort, metricPath, params).
+		DoRaw()
+	if err != nil {
+		return cpus, time.Time{}, fmt.Errorf("failed to get pods metrics: %v", err)
+	}
+
+	glog.V(4).Infof("Heapster metrics result: %s", string(resultRaw))
+
+	metrics := metrics_api.PodMetricsList{}
+	err = json.Unmarshal(resultRaw, &metrics)
+	if err != nil {
+		return cpus, time.Time{}, fmt.Errorf("failed to unmarshall heapster response: %v", err)
+	}
+
+	if len(metrics.Items) != len(podNames) {
+		present := sets.NewString()
+		for _, m := range metrics.Items {
+			present.Insert(m.Name)
+		}
+		missing := make([]string, 0)
+		for expected := range podNames {
+			if !present.Has(expected) {
+				missing = append(missing, expected)
+			}
+		}
+		hint := ""
+		if len(missing) > 0 {
+			hint = fmt.Sprintf(" (sample missing pod: %s/%s)", namespace, missing[0])
+			glog.Warning(hint)
+		}
+	}
+
+	for _, m := range metrics.Items {
+		if index, found := podNames[m.Name]; found {
+			var sum int64 = 0
+			for _, c := range m.Containers {
+				cpu, found := c.Usage[v1.ResourceCPU]
+				if !found {
+					glog.Warningf("no cpu for container %v in pod %v/%v", c.Name, namespace, m.Name)
+				} else {
+					sum += cpu.MilliValue()
+				}
+			}
+			cpus[index] = sum
+		}
+	}
+
+	return cpus, metrics.Items[0].Timestamp.Time, nil
 }
 
 // GetCustomMetric returns the average value of the given custom metric from the
