@@ -668,15 +668,16 @@ func (s ActivePods) Less(i, j int) bool {
 	if api.IsPodReady(s.Pods[i]) != api.IsPodReady(s.Pods[j]) {
 		return !api.IsPodReady(s.Pods[i])
 	}
-	// TODO: take availability into account when we push minReadySeconds information from deployment into pods,
+
+	if s.Preference != nil && s.Preference[i] != s.Preference[j] {
+		return s.Preference[i] < s.Preference[j]
+	}
+// TODO: take availability into account when we push minReadySeconds information from deployment into pods,
 	//       see https://github.com/kubernetes/kubernetes/issues/22065
 	// 4. Been ready for empty time < less time < more time
 	// If both pods are ready, the latest ready one is smaller
 	if api.IsPodReady(s.Pods[i]) && api.IsPodReady(s.Pods[j]) && !podReadyTime(s.Pods[i]).Equal(podReadyTime(s.Pods[j])) {
 		return afterOrZero(podReadyTime(s.Pods[i]), podReadyTime(s.Pods[j]))
-	}
-	if s.Preference != nil && s.Preference[i] != s.Preference[j] {
-		return s.Preference[i] < s.Preference[j]
 	}
 
 	// 5. Pods with containers with higher restart counts < lower restart counts
