@@ -300,6 +300,11 @@ func initConfigz(kc *componentconfig.KubeletConfiguration) (*configz.Config, err
 }
 
 func run(s *options.KubeletServer, kubeDeps *kubelet.KubeletDeps) (err error) {
+	if val, ok := s.NodeLabels["gpu"]; ok && val == "1" {
+		glog.Warningf("Force NvidiaGPUs = 1 due to %v", s.NodeLabels)
+		s.NvidiaGPUs = 1
+	}
+
 	// TODO: this should be replaced by a --standalone flag
 	standaloneMode := (len(s.APIServerList) == 0 && !s.RequireKubeConfig)
 
