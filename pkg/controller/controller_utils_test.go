@@ -370,7 +370,7 @@ func TestSortingActivePods(t *testing.T) {
 		for j := 0; j < numPods; j++ {
 			randomizedPods[j] = pods[idx[j]]
 		}
-		sort.Sort(ActivePods(randomizedPods))
+		sort.Sort(ActivePods{randomizedPods, nil})
 		actual := getOrder(randomizedPods)
 
 		if !reflect.DeepEqual(actual, expected) {

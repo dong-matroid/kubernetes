@@ -639,41 +639,53 @@ func (s ByLogging) Less(i, j int) bool {
 }
 
 // ActivePods type allows custom sorting of pods so a controller can pick the best ones to delete.
-type ActivePods []*api.Pod
+type ActivePods struct {
+	Pods []*api.Pod
+	Preference []int64 // the bigger the likelihood to stay
+}
 
-func (s ActivePods) Len() int      { return len(s) }
-func (s ActivePods) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s ActivePods) Len() int      { return len(s.Pods) }
+func (s ActivePods) Swap(i, j int) {
+	s.Pods[i], s.Pods[j] = s.Pods[j], s.Pods[i]
+	if s.Preference != nil {
+		s.Preference[i], s.Preference[j] = s.Preference[j], s.Preference[i]
+	}
+}
 
 func (s ActivePods) Less(i, j int) bool {
 	// 1. Unassigned < assigned
 	// If only one of the pods is unassigned, the unassigned one is smaller
-	if s[i].Spec.NodeName != s[j].Spec.NodeName && (len(s[i].Spec.NodeName) == 0 || len(s[j].Spec.NodeName) == 0) {
-		return len(s[i].Spec.NodeName) == 0
+	if s.Pods[i].Spec.NodeName != s.Pods[j].Spec.NodeName && (len(s.Pods[i].Spec.NodeName) == 0 || len(s.Pods[j].Spec.NodeName) == 0) {
+		return len(s.Pods[i].Spec.NodeName) == 0
 	}
 	// 2. PodPending < PodUnknown < PodRunning
 	m := map[api.PodPhase]int{api.PodPending: 0, api.PodUnknown: 1, api.PodRunning: 2}
-	if m[s[i].Status.Phase] != m[s[j].Status.Phase] {
-		return m[s[i].Status.Phase] < m[s[j].Status.Phase]
+	if m[s.Pods[i].Status.Phase] != m[s.Pods[j].Status.Phase] {
+		return m[s.Pods[i].Status.Phase] < m[s.Pods[j].Status.Phase]
 	}
 	// 3. Not ready < ready
 	// If only one of the pods is not ready, the not ready one is smaller
-	if api.IsPodReady(s[i]) != api.IsPodReady(s[j]) {
-		return !api.IsPodReady(s[i])
+	if api.IsPodReady(s.Pods[i]) != api.IsPodReady(s.Pods[j]) {
+		return !api.IsPodReady(s.Pods[i])
 	}
 	// TODO: take availability into account when we push minReadySeconds information from deployment into pods,
 	//       see https://github.com/kubernetes/kubernetes/issues/22065
 	// 4. Been ready for empty time < less time < more time
 	// If both pods are ready, the latest ready one is smaller
-	if api.IsPodReady(s[i]) && api.IsPodReady(s[j]) && !podReadyTime(s[i]).Equal(podReadyTime(s[j])) {
-		return afterOrZero(podReadyTime(s[i]), podReadyTime(s[j]))
+	if api.IsPodReady(s.Pods[i]) && api.IsPodReady(s.Pods[j]) && !podReadyTime(s.Pods[i]).Equal(podReadyTime(s.Pods[j])) {
+		return afterOrZero(podReadyTime(s.Pods[i]), podReadyTime(s.Pods[j]))
 	}
+	if s.Preference != nil && s.Preference[i] != s.Preference[j] {
+		return s.Preference[i] < s.Preference[j]
+	}
+
 	// 5. Pods with containers with higher restart counts < lower restart counts
-	if maxContainerRestarts(s[i]) != maxContainerRestarts(s[j]) {
-		return maxContainerRestarts(s[i]) > maxContainerRestarts(s[j])
+	if maxContainerRestarts(s.Pods[i]) != maxContainerRestarts(s.Pods[j]) {
+		return maxContainerRestarts(s.Pods[i]) > maxContainerRestarts(s.Pods[j])
 	}
 	// 6. Empty creation time pods < newer pods < older pods
-	if !s[i].CreationTimestamp.Equal(s[j].CreationTimestamp) {
-		return afterOrZero(s[i].CreationTimestamp, s[j].CreationTimestamp)
+	if !s.Pods[i].CreationTimestamp.Equal(s.Pods[j].CreationTimestamp) {
+		return afterOrZero(s.Pods[i].CreationTimestamp, s.Pods[j].CreationTimestamp)
 	}
 	return false
 }

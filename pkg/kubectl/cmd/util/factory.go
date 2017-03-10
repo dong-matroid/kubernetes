@@ -797,7 +797,7 @@ func (f *factory) AttachablePodForObject(object runtime.Object) (*api.Pod, error
 	switch t := object.(type) {
 	case *api.ReplicationController:
 		selector := labels.SelectorFromSet(t.Spec.Selector)
-		sortBy := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods(pods)) }
+		sortBy := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods{pods, nil}) }
 		pod, _, err := GetFirstPod(clientset.Core(), t.Namespace, selector, 1*time.Minute, sortBy)
 		return pod, err
 	case *extensions.Deployment:
@@ -805,7 +805,7 @@ func (f *factory) AttachablePodForObject(object runtime.Object) (*api.Pod, error
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector: %v", err)
 		}
-		sortBy := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods(pods)) }
+		sortBy := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods{pods, nil}) }
 		pod, _, err := GetFirstPod(clientset.Core(), t.Namespace, selector, 1*time.Minute, sortBy)
 		return pod, err
 	case *batch.Job:
@@ -813,7 +813,7 @@ func (f *factory) AttachablePodForObject(object runtime.Object) (*api.Pod, error
 		if err != nil {
 			return nil, fmt.Errorf("invalid label selector: %v", err)
 		}
-		sortBy := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods(pods)) }
+		sortBy := func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods{pods, nil}) }
 		pod, _, err := GetFirstPod(clientset.Core(), t.Namespace, selector, 1*time.Minute, sortBy)
 		return pod, err
 	case *api.Pod:

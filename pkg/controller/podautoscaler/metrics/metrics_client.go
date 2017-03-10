@@ -23,7 +23,8 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/util/sets"
+  "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/v1"
 	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	unversionedcore "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
@@ -51,6 +52,8 @@ type MetricsClient interface {
 	// GetRawMetric gets the given metric (and an associated oldest timestamp)
 	// for all pods matching the specified selector in the given namespace
 	GetRawMetric(metricName string, namespace string, selector labels.Selector) (PodMetricsInfo, time.Time, error)
+
+	GetCpuUtilizationPerPod(pods []*api.Pod) ([]int64, time.Time, error)
 }
 
 const (
@@ -193,6 +196,71 @@ func (h *HeapsterMetricsClient) GetRawMetric(metricName string, namespace string
 	}
 
 	return res, *timestamp, nil
+}
+
+func (h *HeapsterMetricsClient) GetCpuUtilizationPerPod(pods []*api.Pod) ([]int64, time.Time, error) {
+
+	cpus := make([]int64, len(pods), len(pods))
+	podNames := make(map[string]int)
+	for i, pod := range pods {
+		podNames[pod.Name] = i
+		cpus[i] = 1 << 30
+	}
+	glog.Warning("Info: GetCpuUtilizationPerPod for ", podNames)
+
+	namespace := pods[0].Namespace
+	metricPath := fmt.Sprintf("/apis/metrics/v1alpha1/namespaces/%s/pods", namespace)
+	params := make(map[string]string)
+
+	resultRaw, err := h.services.
+		ProxyGet(h.heapsterScheme, h.heapsterService, h.heapsterPort, metricPath, params).
+		DoRaw()
+	if err != nil {
+		return cpus, time.Time{}, fmt.Errorf("failed to get pods metrics: %v", err)
+	}
+
+	glog.V(4).Infof("Heapster metrics result: %s", string(resultRaw))
+
+	metrics := metrics_api.PodMetricsList{}
+	err = json.Unmarshal(resultRaw, &metrics)
+	if err != nil {
+		return cpus, time.Time{}, fmt.Errorf("failed to unmarshall heapster response: %v", err)
+	}
+
+	if len(metrics.Items) != len(podNames) {
+		present := sets.NewString()
+		for _, m := range metrics.Items {
+			present.Insert(m.Name)
+		}
+		missing := make([]string, 0)
+		for expected := range podNames {
+			if !present.Has(expected) {
+				missing = append(missing, expected)
+			}
+		}
+		hint := ""
+		if len(missing) > 0 {
+			hint = fmt.Sprintf(" (sample missing pod: %s/%s)", namespace, missing[0])
+			glog.Warning(hint)
+		}
+	}
+
+	for _, m := range metrics.Items {
+		if index, found := podNames[m.Name]; found {
+			var sum int64 = 0
+			for _, c := range m.Containers {
+				cpu, found := c.Usage[v1.ResourceCPU]
+				if !found {
+					glog.Warningf("no cpu for container %v in pod %v/%v", c.Name, namespace, m.Name)
+				} else {
+					sum += cpu.MilliValue()
+				}
+			}
+			cpus[index] = sum
+		}
+	}
+
+	return cpus, metrics.Items[0].Timestamp.Time, nil
 }
 
 func collapseTimeSamples(metrics heapster.MetricResult, duration time.Duration) (float64, time.Time, bool) {

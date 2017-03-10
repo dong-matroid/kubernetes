@@ -43,6 +43,7 @@ import (
 	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/util/workqueue"
+	scalerMetrics "k8s.io/kubernetes/pkg/controller/podautoscaler/metrics"
 )
 
 const (
@@ -98,6 +99,9 @@ type ReplicaSetController struct {
 	// garbageCollectorEnabled denotes if the garbage collector is enabled. RC
 	// manager behaves differently if GC is enabled.
 	garbageCollectorEnabled bool
+
+	// get cpu usage per pod
+	metricsClient scalerMetrics.MetricsClient
 }
 
 // NewReplicaSetController configures a replica set controller with the specified event recorder
@@ -109,6 +113,16 @@ func NewReplicaSetController(rsInformer informers.ReplicaSetInformer, podInforme
 	eventBroadcaster.StartLogging(glog.Infof)
 	eventBroadcaster.StartRecordingToSink(&unversionedcore.EventSinkImpl{Interface: kubeClient.Core().Events("")})
 
+	var metricsClient scalerMetrics.MetricsClient = nil
+	if kubeClient != nil {
+		metricsClient = scalerMetrics.NewHeapsterMetricsClient(
+				kubeClient,
+				scalerMetrics.DefaultHeapsterNamespace,
+				scalerMetrics.DefaultHeapsterScheme,
+				scalerMetrics.DefaultHeapsterService,
+				scalerMetrics.DefaultHeapsterPort)
+	}
+
 	rsc := &ReplicaSetController{
 		kubeClient: kubeClient,
 		podControl: controller.RealPodControl{
@@ -119,6 +133,7 @@ func NewReplicaSetController(rsInformer informers.ReplicaSetInformer, podInforme
 		expectations:  controller.NewUIDTrackingControllerExpectations(controller.NewControllerExpectations()),
 		queue:         workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "replicaset"),
 		garbageCollectorEnabled: garbageCollectorEnabled,
+		metricsClient: metricsClient,
 	}
 
 	rsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -515,7 +530,16 @@ func (rsc *ReplicaSetController) manageReplicas(filteredPods []*api.Pod, rs *ext
 			// Sort the pods in the order such that not-ready < ready, unscheduled
 			// < scheduled, and pending < running. This ensures that we delete pods
 			// in the earlier stages whenever possible.
-			sort.Sort(controller.ActivePods(filteredPods))
+			if rsc.metricsClient != nil {
+				cpus, _, error := rsc.metricsClient.GetCpuUtilizationPerPod(filteredPods)
+				if error != nil {
+					glog.Warning("Error GetCpuUtilizationPerPod ", error)
+				}
+				glog.Warning("Info: GetCpuUtilizationPerPod result ", cpus)
+				sort.Sort(controller.ActivePods{filteredPods, cpus})
+			} else {
+				sort.Sort(controller.ActivePods{filteredPods, nil})
+			}
 		}
 		// Snapshot the UIDs (ns/name) of the pods we're expecting to see
 		// deleted, so we know to record their expectations exactly once either

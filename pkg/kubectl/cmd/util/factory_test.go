@@ -525,7 +525,7 @@ func TestGetFirstPod(t *testing.T) {
 		{
 			name:    "kubectl attach - two ready pods",
 			podList: newPodList(2, -1, -1, labelSet),
-			sortBy:  func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods(pods)) },
+			sortBy:  func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods{pods, nil}) },
 			expected: &api.Pod{
 				ObjectMeta: api.ObjectMeta{
 					Name:              "pod-1",
@@ -568,7 +568,7 @@ func TestGetFirstPod(t *testing.T) {
 					},
 				},
 			},
-			sortBy: func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods(pods)) },
+			sortBy: func(pods []*api.Pod) sort.Interface { return sort.Reverse(controller.ActivePods{pods, nil}) },
 			expected: &api.Pod{
 				ObjectMeta: api.ObjectMeta{
 					Name:              "pod-1",
